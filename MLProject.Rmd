@@ -1,0 +1,164 @@
+---
+title: "Practical ML Project"
+author: "Miquo Trinidad"
+date: "August 13, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Background of the data
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The data for this project comes from this source: http://groupware.les.inf.puc-rio.br/har
+
+```{r echo=FALSE}
+library(caret)
+library(rattle)
+library(rpart)
+library(rpart.plot)
+library(dplyr)
+library(parallel)
+library(doParallel)
+```
+```{r echo=FALSE}
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+```
+
+
+# Data Exploration and Cleaning
+Loading the Train and Test Data set
+```{r echo = FALSE}
+train<- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"),header=TRUE)
+test <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"),header=TRUE)
+```
+
+We look at the dimensions of both train and test sets
+```{r}
+dim(train);dim(test)
+```
+The data sets are comprised of 160 variables and test contains 20 observations, while the train set contains 19622
+
+We check the Variables of the datasets
+```{r}
+str(train)
+```
+From inspection we can see that some variables have a lot of missing values and infinity, thus we will be removing them
+
+We will now remove variables with missing values greater than 50% from the train set and the first 7 variables as they do not contribute much to our model prediction since our goal is a classification algorithm rather than a time-series prediction, we will remove the time stamp variables, and other variables that are not really needed
+```{r}
+ind <- which(colSums(is.na(train)|train=="")>0.5*dim(train)[1]) 
+train_dropped <- train[,-ind]
+train_clean <- train_dropped[,-c(1:7)]
+dim(train_clean)
+
+```
+We do the same for the test data
+```{r}
+ind <- which(colSums(is.na(test)|test=="")>0.5*dim(test)[1]) 
+test_dropped <- test[,-ind]
+test_clean <- test_dropped[,-c(1:7)]
+dim(test_clean)
+```
+
+# Training/Testing/Validation
+
+We first partition the Train data set into our training and testing for our model building
+```{r}
+set.seed(69)
+validation <- test_clean
+train_final <- train_clean
+index <- createDataPartition(train_final$classe,p=0.7,list=FALSE)
+training <- train_final[index,]
+testing <- train_final[-index,]
+dim(training);dim(testing);dim(validation)
+```
+Since we have prepared our stratified Training, Testing and Validation data sets we now proceed to our model building
+
+# Model Building
+
+We will be comparing three(3) tree based models namely, the Decision Tree, Random Forest, Gradient Boosting Method for our classification models
+
+We will also be using 3 fold cross validation to avoid overfitting in our models
+
+## Decision Tree
+```{r}
+cv <- trainControl(method="cv",number=3,allowParallel=TRUE)
+```
+```{r}
+dt <- train(classe~.,data=training,method="rpart",trControl = cv)
+```
+
+```{r}
+fancyRpartPlot(dt$finalModel)
+```
+
+```{r}
+dt_pred <- predict(dt,newdata = testing)
+cm_dt <- confusionMatrix(testing$classe,dt_pred)
+cm_dt$overall
+```
+The accuracy of the Decision Tree model is at about 49.22% which is very low indicating that the decision tree model is not a good classifier for our data.
+
+
+# Random Forest Model
+```{r}
+rf <- train(classe~., data=training, method="rf", trControl=cv, verbose=FALSE)
+```
+
+```{r}
+print(rf)
+```
+
+```{r}
+rf_pred <- predict(rf,newdata=testing)
+cm_rf <- confusionMatrix(testing$classe,rf_pred)
+cm_rf$table
+```
+```{r}
+cm_rf$overall
+```
+
+```{r}
+ImpVars <- varImp(rf)
+ImpVars
+```
+We can see that the radiant forest method was able to get an accuracy of 99.37% with 3 fold cross-validation method which makes it a lot better of a classifier compared to the decision tree model.
+
+# Gradient Boosting Method
+
+```{r}
+gbm <- train(classe~.,data=training,method = "gbm",trControl = cv,verbose = FALSE)
+print(gbm)
+```
+
+```{r}
+gbm_pred <- predict(gbm,newdata=testing)
+cm_gbm <- confusionMatrix(testing$classe,gbm_pred)
+cm_gbm$table
+```
+```{r}
+cm_gbm$overall[1]
+```
+
+The accuracy of the gradient boosting model at 3 folds is 96.67% which is also a lot better than the decision tree and almost the same performance as the random forest model
+
+# Conclusion and Model Selection
+We can see that both Random Forest and Gradient boosting are valid models with good performance on the testing set, We will then use both to predict our validation data set or out of sample dataset
+
+```{r}
+valid_rf <- predict(rf,newdata=validation)
+valid_gbm <- predict(gbm,newdata=validation)
+```
+We will use both as the random forest seems to be a bit overfitted
+```{r}
+valid_rf
+valid_gbm
+stopCluster(cluster)
+```
+We can see here that the gbm and rf models gave the same predictions for our out of sample data set, we can use either the gradiant boosting or the random forest models.
+
